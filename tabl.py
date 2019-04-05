@@ -9,9 +9,10 @@ from datetime import datetime
 from fancyimpute import KNN
 from statsmodels.tsa.arima_model import ARIMA
 
+# for reproducibiliy
 np.random.seed(123)
 
-
+# Get Asset 
 ticker = 'AAPL'
 stock = pdr.get_data_yahoo(ticker.upper(), start='2009-01-14', end=str(datetime.now().date()))
 
@@ -29,6 +30,7 @@ vix = vix[4]
 stock = pd.concat([stock, vix], axis=1)
 
 
+# Create label data for classification
 up = pd.DataFrame(data={"UP":np.where(stock["Close"].shift(-1) > stock["Close"], 1, 0)})
 dn = pd.DataFrame(data={"DN":np.where(stock["Close"].shift(-1) < stock["Close"], 1, 0)})
 lbls = up.join(dn)
@@ -49,6 +51,7 @@ stock = stock.astype(float)
 
 periods = np.double(np.array(list(range(0, len(stock['Close'])))))
 
+# Assorted financial features
 HT = talib.HT_TRENDMODE(stock['Close'])
 rsi = talib.RSI(stock['Close'], timeperiod=5)
 wma = talib.WMA(stock['Close'], timeperiod=20)
@@ -57,7 +60,8 @@ upperband, middleband, lowerband = talib.BBANDS(stock['Close'], timeperiod=10, n
 Roc = talib.ROC(stock['Close'], timeperiod=5)
 Atr = talib.ATR(stock['High'], stock['Low'], stock['Close'], timeperiod=10)
 
-
+# ARIMA model
+# the p,d,q parameters should be optimized per asset
 X = stock.Close.values
 size = int(len(X) * 0.66)
 train, test = X[0:size], X
@@ -76,6 +80,7 @@ arima = pd.DataFrame(predictions)
 arima.iloc[0,:] = None
 
 
+# Merge feature sets
 HT = pd.DataFrame(data={'TRENDMODE':HT})
 wma = pd.DataFrame(data={'WMA':wma})
 rsi = pd.DataFrame(data={'RSI':rsi})
@@ -103,9 +108,9 @@ stock = stock.join(Atr)
 stock = stock.as_matrix() 
 stock = np.append(stock, arima, 1)
 stock = KNN(k=7).fit_transform(stock)
-
 stock = pd.DataFrame(stock)
 
+# Test/Train split
 stock_train = stock.iloc[0:round(len(stock)*0.8),:]
 stock_test = stock.iloc[round(len(stock)*0.8):,:]
 
@@ -118,24 +123,21 @@ sc_predict = MinMaxScaler()
 test_set_scaled = sc_predict.fit_transform(stock_test)
 
 X_train = []
-y_train = []
 
 n_future = 1  # Number of time steps predicted
-n_past = 20  # Number of time steps used in preditcion
+n_past = 20  # Number of previous time steps used in preditcion
 
 for i in range(n_past, len(training_set_scaled) - n_future + 1):
-    X_train.append(training_set_scaled[i - n_past:i, 0:17])
-    y_train.append(training_set_scaled[i+n_future-1:i + n_future, 3])
+    X_train.append(training_set_scaled[i - n_past:i, 0:stock.shape[1]])
 
 X_train = np.array(X_train)
+X_train = np.reshape(X_train, (X_train.shape[0], X_train.shape[1], stock.shape[1]))
 
-X_train = np.reshape(X_train, (X_train.shape[0], X_train.shape[1], 17))
-
-lbls_train = lbls_train.iloc[:-20]
+lbls_train = lbls_train.iloc[:-n_past]
 
 
-# 1 hidden layer network with input: 20x10, hidden 120x5, output 3x1
-template = [[20,17], [120,5], [2,1]]
+# 1 hidden layer network with input: 20x17, hidden 120x5, output 3x1
+template = [[n_past, stock.shape[1]], [120,5], [2,1]]
 
 
 # get Bilinear model
@@ -162,21 +164,22 @@ model.fit(X_train, lbls_train, batch_size=256, epochs=100, class_weight=class_we
 pred = model.predict(X_train)
 
 total = pd.concat((stock_train, stock_test), axis=0)
-inputs = total[len(total) - len(stock_test) - 20:].values
+inputs = total[len(total) - len(stock_test) - n_past:].values
 inputs = sc_predict.transform(inputs)
-add = np.zeros((n_past, 17))
+add = np.zeros((n_past, stock.shape[1]))
 inputs = np.vstack((inputs, add))
 
+# Predicting Test set
 X_test = []
 for i in range(n_past, len(inputs) - n_future + 1):
-    X_test.append(inputs[i - n_past:i, 0:17])
+    X_test.append(inputs[i - n_past:i, 0:stock.shape[1]])
 
 X_test = np.array(X_test)
-X_test = np.reshape(X_test, (X_test.shape[0], X_test.shape[1], 17))
+X_test = np.reshape(X_test, (X_test.shape[0], X_test.shape[1], stock.shape[1]))
 
 
 pred2 = model.predict(X_test)
-pred2 = pred2[20:]
+pred2 = pred2[n_past:]
 
 for i in range(0, pred2.shape[0]):
     for j in range(0, pred2.shape[1]):
@@ -185,6 +188,7 @@ for i in range(0, pred2.shape[0]):
         else:
             pred2[i][j] = 0
 
+# Determining out of sample accuracy
 acc = np.where(pred2 == np.array(lbls_test), 1, 0)
 acc1 = acc[:,0]
 acc2 = acc[:,1]
