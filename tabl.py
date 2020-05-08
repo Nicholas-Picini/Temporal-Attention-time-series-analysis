@@ -3,7 +3,6 @@ import keras
 import talib
 import numpy as np
 import pandas as pd
-import esig.tosig as ts
 import pandas_datareader as pdr
 import matplotlib.pyplot as plt
 from datetime import datetime
@@ -19,11 +18,6 @@ stock = pdr.get_data_yahoo(ticker.upper(), start='2009-01-14', end=str(datetime.
 cor = pdr.get_data_yahoo('MSFT', start='2009-01-14', end=str(datetime.now().date()))
 cor = cor["Close"]
 retruns = np.log(stock["Close"] / stock["Close"].shift(1))
-
-## MODWT as a feature
-#mra = pd.read_csv('modwt_mra.csv')
-#mra = pd.DataFrame(mra["V3"])
-#mra = mra.set_index(stock.index)
 
 cor = cor.rename("Corr")
 retruns = retruns.rename("retruns")
@@ -70,9 +64,6 @@ stock = stock.rename(columns={stock.columns[11]: "VIX"})
 
 up = pd.DataFrame(data={"UP":np.where(stock["Close"].shift(-1) > stock["Close"], 1, 0)})
 dn = pd.DataFrame(data={"DN":np.where(stock["Close"].shift(-1) < stock["Close"], 1, 0)})
-
-#up = pd.DataFrame(data={"UP":np.where(stock["Close"].shift(-1) > stock["Open"].shift(-1), 1, 0)})
-#dn = pd.DataFrame(data={"DN":np.where(stock["Close"].shift(-1) < stock["Open"].shift(-1), 1, 0)})
 
 lbls = up.join(dn)
 
@@ -164,100 +155,6 @@ stock = stock.join(div)
 stock = stock.join(voldiff)
 stock = stock.join(VolROC)
 stock = stock.join(opendiff)
-#stock = stock.join(mra)
-
-
-######################################################
-# Rough path signature as feature
-######################################################
-
-# Rolling window function
-#def GetWindow(x, h_window=30, f_window=10):
-#    # First window
-#    X = np.array(x.iloc[:h_window,]).reshape(1,-1)
-#    # Append next window
-#    for i in range(1, len(x)-h_window+1):
-#        x_i = np.array(x.iloc[i:i+h_window,]).reshape(1,-1)
-#        X = np.append(X, x_i, axis=0)
-#    # Cut end no usable in prediction
-#    rolling_window = (pd.DataFrame(X)).iloc[:-f_window,]
-#    return rolling_window
-#
-#
-#def GetNextMean(x, h_window=30, f_window=10):
-#    return pd.DataFrame((x.rolling(f_window).mean().iloc[h_window+f_window-1:,]))
-#
-#
-#def AddTime(X):
-#    t = np.linspace(0, 1, len(X))
-#    return np.c_[t, X]
-#
-#
-## Lead - Lag Transform
-#def Lead(X):
-#    s = X.shape
-#    x_0 = X[:,0]
-#    Lead = np.delete(np.repeat(x_0, 2), 0).reshape(-1, 1)
-#
-#    for j in range(1, s[1]):
-#        x_j = X[:,j]
-#        x_j_lead = np.delete(np.repeat(x_j, 2), 0).reshape(-1, 1)
-#        Lead = np.concatenate((Lead, x_j_lead), axis=1)
-#
-#    return Lead
-#
-#
-#def Lag(X):
-#    s = X.shape
-#    x_0 = X[:,0]
-#    Lag = np.delete(np.repeat(x_0,2),-1).reshape(-1,1)
-#
-#    for j in range(1,s[1]):
-#        x_j = X[:,j]
-#        x_j_lag  = np.delete(np.repeat(x_j,2),-1).reshape(-1,1)
-#        Lag = np.concatenate((Lag,x_j_lag), axis = 1)
-#
-#    return Lag
-#
-#
-#h_window = 20
-#f_window = 1
-#sig_level = 2
-#
-#close_price = stock.Close
-#s1 = pd.Series([0])
-#close_price = close_price.append(s1)
-#
-## signature features
-##Consider only area that has at least f_window future prices left
-#close_price_slice = close_price.iloc[0:(len(close_price)-(f_window))]
-#close_price_array = np.array(close_price_slice).reshape(-1,1)
-#lag = Lag(close_price_array)
-#lead = Lead(AddTime(close_price_array))
-##concatenate everything to get a datastream
-#stream = np.concatenate((lead,lag), axis = 1)
-#X_sig = [ts.stream2sig(stream[0:2*h_window-1], sig_level)]
-#
-#for i in range(1,(len(close_price)-(f_window)-(h_window)+1)):
-#    stream_i = stream[2*i: 2*(i+h_window)-1]
-#    signature_i = [ts.stream2sig(stream_i, sig_level)]
-#    X_sig = np.append(X_sig, signature_i, axis=0)
-#
-#X_sig = pd.DataFrame(X_sig)
-#del X_sig[0]
-#
-#X_sig = np.array(X_sig)
-#pad = np.full([h_window - 1, X_sig.shape[1]], np.nan)
-#X_sig = np.vstack((pad, X_sig))
-#X_sig = pd.DataFrame(X_sig)
-#
-#X_sig = X_sig.set_index(stock.index)
-#
-#stock = stock.join(X_sig)
-
-######################################################
-######################################################
-
 
 
 # Impute missing values using KNN
@@ -295,7 +192,7 @@ X_train = np.reshape(X_train, (X_train.shape[0], X_train.shape[1], stock.shape[1
 lbls_train = lbls_train.iloc[:-n_past]
 
 
-# 1 hidden layer network with input: 20x17, hidden 120x5, output 2x1
+# 1 hidden layer network with input: n_past x num_features, hidden 120x5, output 2x1
 template = [[n_past, stock.shape[1]], [120,5], [2,1]]
 
 
@@ -317,7 +214,7 @@ class_weight = {0 : 1e6/300.0,
                 2 : 1e6/300.0}
 
 
-# trainin          # remove .iloc[2:] for single day
+# training          # remove .iloc[2:] for single day
 model.fit(X_train, lbls_train.iloc[2:], batch_size=256, epochs=100, class_weight=class_weight)
 
 model.save('model.h5')
@@ -327,7 +224,6 @@ pred = model.predict(X_train)
 total = pd.concat((stock_train, stock_test), axis=0)
 inputs = total[len(total) - len(stock_test) - n_past:].values
 inputs = sc_predict.transform(inputs)
-# n_past + (n_future - 1)
 add = np.zeros((n_past + (n_future - 1), stock.shape[1]))
 inputs = np.vstack((inputs, add))
 
@@ -353,7 +249,6 @@ pred2_ = np.array(pd.DataFrame(pred2).iloc[:-2])
 lbls_test_ = lbls_test.iloc[2:]
                                  # remove .iloc[2:] for single day
 acc = np.where(pred2_ == np.array(lbls_test_), 1, 0)
-
 
 acc1 = acc[:,0]
 acc2 = acc[:,1]
